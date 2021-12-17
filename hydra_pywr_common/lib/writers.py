@@ -62,7 +62,12 @@ class PywrJsonWriter():
 
     def process_scenarios(self):
         scenarios = self.network.scenarios
-        return [ scenario.get_values() for scenario in scenarios.values() ]
+        if isinstance(scenarios, list):
+            scenario_values = scenarios
+        elif isinstance(scenarios, dict):
+            scenario_values = scenarios.values()
+
+        return [ scenario.get_values() for scenario in scenario_values ]
 
 
 """
