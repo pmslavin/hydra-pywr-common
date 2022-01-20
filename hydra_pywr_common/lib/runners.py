@@ -1,4 +1,5 @@
 import sys
+import json
 import subprocess
 
 def write_output(text, dest=sys.stdout):
@@ -13,10 +14,14 @@ class IntegratedModelRunner():
 
     def run_subprocess(self):
         fdf, fdfcmd = "fdf", "run"
-        modelargs = [ self.pynsim_config ]
-        pargs = (fdf, fdfcmd, *modelargs)
+        outfile = "pynsim_config.json"
+        with open(outfile, 'w') as fp:
+            json.dump(self.pynsim_config, fp)
+        pargs = (fdf, fdfcmd, outfile)
         write_output(f"Begin model run using: {pargs=}...")
         proc = subprocess.Popen(pargs, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         out,err = proc.communicate()
 
         write_output(f"Model execution complete with exit code: {proc.returncode}")
+        write_output(out.decode())
+        write_output(err.decode())

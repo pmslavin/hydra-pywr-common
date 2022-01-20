@@ -257,8 +257,6 @@ class PywrHydraWriter():
 
     def add_network_to_hydra(self):
         """ Pass network to Hydra"""
-        #from pprint import pprint
-        #pprint(self.hydra_network)
         self.hydra.add_network(self.hydra_network)
 
     def collect_template_attributes(self):

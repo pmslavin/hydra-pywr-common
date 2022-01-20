@@ -180,3 +180,9 @@ class PywrLineNode(PywrNode):
 
     def __init__(self, data):
         super().__init__(data)
+
+class PywrBatteryNode(PywrNode):
+    key = "battery"
+
+    def __init__(self, data):
+        super().__init__(data)
