@@ -13,7 +13,6 @@ class PywrDataframeParameter(PywrParameter, ArbitraryDirectAttrs):
             self.basekey = next(iter(data))  # The first key in data dict
             series = data[self.basekey]
             self.set_value(series)
-            self.pandas_kwargs = argdata.get("pandas_kwargs", {})
         else:
             self.add_attrs(argdata)
 
@@ -30,5 +29,9 @@ class PywrDataframeParameter(PywrParameter, ArbitraryDirectAttrs):
         else:
             ret = self.get_attr_values()
             ret.update({ "type": self.key })
+            # pandas_kwargs no longer accepted by Pywr, parse_dates
+            # essential for dataframe_tools.align_and_resample
+            ret.update({ "parse_dates": True })
+            ret.pop("pandas_kwargs", None)
             return ret
 
