@@ -651,6 +651,9 @@ class IntegratedOutputWriter():
         for node_name, node_ds in node_datasets.items():
             print(f"{self.domain} => {node_name}")
             hydra_node = self.get_node_by_name(node_name)
+            if not hydra_node:
+                print(f"Skipping {sf_hydra_attr['name']}")
+                continue
             sf_res_attr = self.hydra.add_resource_attribute("NODE", hydra_node["id"], sf_hydra_attr["id"], is_var='Y', error_on_duplicate=False)
 
             dataset = { "name":  sf_hydra_attr["name"],

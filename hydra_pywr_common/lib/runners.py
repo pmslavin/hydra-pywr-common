@@ -14,14 +14,17 @@ class IntegratedModelRunner():
 
     def run_subprocess(self):
         fdf, fdfcmd = "fdf", "run"
-        outfile = "pynsim_config.json"
-        with open(outfile, 'w') as fp:
-            json.dump(self.pynsim_config, fp)
-        pargs = (fdf, fdfcmd, outfile)
+        #outfile = "pynsim_config.json"
+        #with open(outfile, 'w') as fp:
+        #    json.dump(self.pynsim_config, fp)
+        pargs = (fdf, fdfcmd, self.pynsim_config)
         write_output(f"Begin model run using: {pargs=}...")
-        proc = subprocess.Popen(pargs, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        out,err = proc.communicate()
-
+        #proc = subprocess.Popen(pargs, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        proc = subprocess.Popen(pargs, stdout=subprocess.PIPE)
+        out = proc.communicate()
+        write_output("Model run complete")
+        """
         write_output(f"Model execution complete with exit code: {proc.returncode}")
         write_output(out.decode())
         write_output(err.decode())
+        """

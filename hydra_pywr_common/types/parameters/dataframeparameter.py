@@ -23,15 +23,16 @@ class PywrDataframeParameter(PywrParameter, ArbitraryDirectAttrs):
     @property
     def value(self):
         if hasattr(self, "_value"):
-            return { "type": self.key,
-                     "data": { self.basekey: self._value}
-                   }
+            ret = { "type": self.key,
+                    "data": { self.basekey: self._value}
+                  }
         else:
             ret = self.get_attr_values()
             ret.update({ "type": self.key })
-            # pandas_kwargs no longer accepted by Pywr, parse_dates
-            # essential for dataframe_tools.align_and_resample
-            ret.update({ "parse_dates": True })
-            ret.pop("pandas_kwargs", None)
-            return ret
 
+        # pandas_kwargs no longer accepted by Pywr, parse_dates
+        # essential for dataframe_tools.align_and_resample
+        ret.update({ "parse_dates": True })
+        ret.pop("pandas_kwargs", None)
+
+        return ret
