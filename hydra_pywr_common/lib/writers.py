@@ -687,7 +687,19 @@ def unwrap_list(node_data):
 
 def build_times(data, node="/time"):
     raw_times = data.get_node(node).read().tolist()
-    return [ f"{t[0]:02}-{t[2]:02}-{t[3]}" for t in raw_times ]
+    """ Profile times to determine period.
+        A more rigorous solution is to include a token
+        indicating the period (e.g. H, D, W, or M)
+        in the hdf output.
+    """
+    if len(raw_times) > 1 and (raw_times[0][0] == raw_times[1][0] or raw_times[-2][0] == raw_times[-1][0]):
+        # Probably hours...
+        times = [ f"{t[0]:02}-{t[2]:02}-{t[3]} {t[1] % 24:02}:00:00" for t in raw_times ]
+    else:
+        # ...assume single day values
+        times = [ f"{t[0]:02}-{t[2]:02}-{t[3]}" for t in raw_times ]
+
+    return times
 
 def build_node_dataset(node, times, node_attr="simulated_flow"):
     raw_node_data = node.read().tolist()
