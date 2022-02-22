@@ -642,9 +642,11 @@ class IntegratedOutputWriter():
 
 
     def add_node_attributes(self, node_datasets, output_attr="simulated_flow"):
+        """
         sf_attr = make_hydra_attr(output_attr)
         hydra_attrs = self.hydra.add_attributes([sf_attr])
         sf_hydra_attr = hydra_attrs[0]
+        """
 
         resource_scenarios = []
 
@@ -652,15 +654,39 @@ class IntegratedOutputWriter():
             print(f"{self.domain} => {node_name}")
             hydra_node = self.get_node_by_name(node_name)
             if not hydra_node:
-                print(f"Skipping {sf_hydra_attr['name']}")
+                print(f"Skipping {node_name}")
                 continue
-            sf_res_attr = self.hydra.add_resource_attribute("NODE", hydra_node["id"], sf_hydra_attr["id"], is_var='Y', error_on_duplicate=False)
 
-            dataset = { "name":  sf_hydra_attr["name"],
+            volume_dim = "Volume"
+            volumetric_flow_rate_dim = "Volumetric flow rate"
+            power_dim = "Power"
+            storage_types = ("reservoir", "storage")
+            energy_types = ("generator", "bus", "line", "load", "battery")
+
+            hydra_node_type = hydra_node["types"][0]["name"]
+
+            if hydra_node_type.lower() in storage_types:
+                result_dim = self.hydra.get_dimension_by_name(volume_dim)
+                result_attr = self.hydra.get_attribute_by_name_and_dimension("simulated_volume", result_dim["id"])
+                result_unit = self.hydra.get_unit_by_abbreviation("Mm³")
+            elif hydra_node_type.lower() in energy_types:
+                result_dim = self.hydra.get_dimension_by_name(power_dim)
+                result_attr = self.hydra.get_attribute_by_name_and_dimension("flow", result_dim["id"])
+                result_unit = self.hydra.get_unit_by_abbreviation("MW")
+            else:
+                result_dim = self.hydra.get_dimension_by_name(volumetric_flow_rate_dim)
+                result_attr = self.hydra.get_attribute_by_name_and_dimension("simulated_flow", result_dim["id"])
+                result_unit = self.hydra.get_unit_by_abbreviation("Mm³/day")
+
+            result_unit_id = result_unit["id"] if result_unit is not None else "-"
+
+            sf_res_attr = self.hydra.add_resource_attribute("NODE", hydra_node["id"], result_attr["id"], is_var='Y', error_on_duplicate=False)
+
+            dataset = { "name":  result_attr["name"],
                         "type":  "DATAFRAME",
                         "value": json.dumps(node_ds),
                         "metadata": "{}",
-                        "unit": "-",
+                        "unit_id": result_unit_id,
                         "hidden": 'N'
                       }
 
@@ -701,12 +727,12 @@ def build_times(data, node="/time"):
 
     return times
 
-def build_node_dataset(node, times, node_attr="simulated_flow"):
+def build_node_dataset(node, times, node_attr="value"):
     raw_node_data = node.read().tolist()
     node_data = unwrap_list(raw_node_data)
 
     series = {}
-    dataset = { node_attr: series}
+    dataset = { "value": series}
 
     for t,v in zip(times, node_data):
         series[t] = v
