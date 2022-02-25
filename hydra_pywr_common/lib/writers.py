@@ -1,4 +1,5 @@
 import json
+import pandas as pd
 
 
 """
@@ -581,11 +582,12 @@ class PywrHydraIntegratedWriter():
 class IntegratedOutputWriter():
     domain_attr_map = {"water": "simulated_flow", "energy": "flow"}
 
-    def __init__(self, scenario_id, template_id, output_file, domain, hydra=None, hostname=None, session_id=None, user_id=None):
+    def __init__(self, scenario_id, template_id, output_file, metric_file, domain, hydra=None, hostname=None, session_id=None, user_id=None):
         import tables
         self.scenario_id = scenario_id
         self.template_id = template_id
         self.data = tables.open_file(output_file)
+        self.metrics = pd.HDFStore(metric_file)
         self.domain = domain
 
         self.hydra = hydra
@@ -617,11 +619,33 @@ class IntegratedOutputWriter():
         self.times = build_times(self.data)
         node_datasets = self.process_node_results(output_attr)
         parameter_datasets = self.process_parameter_results()
+        node_metrics = self.process_metrics()
 
+        node_metric_scenarios = self.add_node_metrics(node_metrics)
         node_scenarios = self.add_node_attributes(node_datasets, output_attr=output_attr)
-        output_scenario["resourcescenarios"] = node_scenarios
+
+        output_scenario["resourcescenarios"] = node_scenarios + node_metric_scenarios
 
         self.hydra.update_scenario(output_scenario)
+
+    def process_metrics(self):
+        exclude = "hydropowerrecorder"
+        strtok = ':'
+
+        # e.g. ['/__Irrigation south__:Curtailment'
+        groups = [group for group in self.metrics if not exclude in group.lower()]
+        node_attrs = {}
+        for group in groups:
+            group_data = build_metric(group, self.metrics[group])
+            if group.startswith('/'):
+                group = group[1:]
+
+            name, attr = group.split(strtok)
+            name = name.strip('_')
+            node_attrs[(name, attr)] = group_data
+
+        return node_attrs
+
 
     def process_node_results(self, node_attr):
         node_datasets = {}
@@ -639,6 +663,51 @@ class IntegratedOutputWriter():
             param_datasets.append(ds)
 
         return param_datasets
+
+    def add_node_metrics(self, node_metrics):
+
+        resource_scenarios = []
+        volumetric_flow_rate_dim = "Volumetric flow rate"
+
+        for (node_name, attr), data in node_metrics.items():
+            hydra_node = self.get_node_by_name(node_name)
+            if not hydra_node:
+                print(f"Skipping attr {attr} on {node_name}")
+                continue
+
+            result_dim = self.hydra.get_dimension_by_name(volumetric_flow_rate_dim)
+
+            if attr.lower().endswith("_values"):
+                result_attr = self.hydra.get_attribute_by_name_and_dimension("Curtailment_value", result_dim["id"])
+                data_type = "SCALAR"
+                value = json.dumps(data[0])
+            else:
+                result_attr = self.hydra.get_attribute_by_name_and_dimension("simulated_Curtailment", result_dim["id"])
+                data_type = "DATAFRAME"
+                data.index = data.index.to_timestamp()
+                data.index = data.index.map(str)
+                value = data.to_json()
+
+            result_unit = self.hydra.get_unit_by_abbreviation("Mm³/day")
+
+            result_unit_id = result_unit["id"] if result_unit is not None else "-"
+            sf_res_attr = self.hydra.add_resource_attribute("NODE", hydra_node["id"], result_attr["id"], is_var='Y', error_on_duplicate=False)
+
+            dataset = { "name":  result_attr["name"],
+                        "type":  data_type,
+                        "value": value,
+                        "metadata": "{}",
+                        "unit_id": result_unit_id,
+                        "hidden": 'N'
+                      }
+
+            resource_scenario = { "resource_attr_id": sf_res_attr["id"],
+                                  "dataset": dataset
+                                }
+
+            resource_scenarios.append(resource_scenario)
+
+        return resource_scenarios
 
 
     def add_node_attributes(self, node_datasets, output_attr="simulated_flow"):
@@ -738,6 +807,9 @@ def build_node_dataset(node, times, node_attr="value"):
         series[t] = v
 
     return dataset
+
+def build_metric(node, data):
+    return data
 
 
 def build_parameter_dataset(param, times, stok='_'):
