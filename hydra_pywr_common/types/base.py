@@ -163,12 +163,15 @@ class PywrParameter(PywrEntity):
     @staticmethod
     def ParameterFactory(arg): # (name, data) from params.items()
         instkey = arg[1]["type"].lower()
-        if not instkey.endswith("parameter"):
-            instkey += "parameter"
         #instcls = PywrParameter.parameter_type_map[instkey]
         instcls = PywrParameter.parameter_type_map.get(instkey)
         if not instcls:
-            instcls = PywrParameter.parameter_type_map["unknownparameter"]
+            if not instkey.endswith("parameter"):
+                instkey += "parameter"
+            instcls = PywrParameter.parameter_type_map.get(instkey)
+            if not instcls:
+                #breakpoint()
+                instcls = PywrParameter.parameter_type_map["unknownparameter"]
 
         try:
             return instcls(*arg)

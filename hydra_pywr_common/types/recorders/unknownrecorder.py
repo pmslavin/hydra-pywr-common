@@ -11,7 +11,7 @@ class PywrUnknownRecorder(PywrRecorder, ArbitraryDirectAttrs):
     def __init__(self, name, data):
         super().__init__(name)
         #self.add_attrs(data)
-        self.key = data.get("key", self.__class__.key)
+        self.type = data.get("type", self.__class__.key)
         self._data = data
 
 

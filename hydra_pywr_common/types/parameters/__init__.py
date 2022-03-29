@@ -14,4 +14,11 @@ from .interpolatedflowparameter import PywrInterpolatedFlowParameter
 from .recorderthresholdparameter import PywrRecorderThresholdParameter
 from .currentdaythresholdparameter import PywrCurrentDayThresholdParameter
 from .hydropowertargetparameterwithvaribaletailwater import PywrHydroPowerTargetParameterWithVaribaleTailwater
-#from .unknownparameter import PywrUnknownParameter
+from .profileparameters import (
+    PywrRES_hourly_profile,
+    PywrDemand_hourly_profile,
+    PywrDemand_hourly_profile_ELS,
+    PywrCurrentYearThresholdParameter,
+    PywrDemand_proj_rate_parameter
+)
+from .unknownparameter import PywrUnknownParameter

@@ -45,6 +45,13 @@ class PywrOutputNode(PywrNode):
         super().__init__(data)
 
 
+class PywrProportionalInputNode(PywrNode):
+    key = "proportionalinput"
+
+    def __init__(self, data):
+        super().__init__(data)
+
+
 class PywrLinearStorageReleaseControlNode(PywrNode):
     key = "linearstoragereleasecontrol"
 
