@@ -1,6 +1,9 @@
 import json
 import pandas as pd
 
+from hydra_pywr.exporter import PywrHydraExporter
+from hydra_pywr_common.types.network import PywrNetwork
+
 
 """
     PywrNetwork => Pywr_json
@@ -805,15 +808,33 @@ class NetworkTool():
 
     def export_multi(self, client, scenario_id, network_id):
         self.client = client
-        profile = self.get_network_profile(scenario_id, network_id)
-        breakpoint()
+        config = self.get_network_attr(scenario_id, network_id, attr_key="config")
+        profile = self.get_network_attr(scenario_id, network_id, attr_key="network_profile")
 
-    def get_network_profile(self, scenario_id, network_id, profile_key="network_profile"):
-        profile_attr = self.client.get_attribute_by_name_and_dimension(profile_key, None)
+        for template_id, networks in ((int(tid), net) for tid, net in profile.items()):
+            for net_desc in networks:
+                scenario_id = net_desc["scenario_id"]
+                net_name = net_desc["network"]
+
+                exporter = PywrHydraExporter.from_scenario_id(client, scenario_id)
+                data = exporter.get_pywr_data()
+                pnet = PywrNetwork(data)
+                #net_desc["net_inst"] = pnet
+                writer = PywrJsonWriter(pnet)
+                output = writer.as_dict()
+                outfile = f"{net_name}.json"
+                with open(outfile, mode='w') as fp:
+                    json.dump(output, fp, indent=2)
+
+        #breakpoint()
+
+
+    def get_network_attr(self, scenario_id, network_id, attr_key):
+        net_attr = self.client.get_attribute_by_name_and_dimension(attr_key, None)
         ra = self.client.get_resource_attributes("network", network_id)
         ra_id = None
         for r in ra:
-            if r["attr_id"] == profile_attr["id"]:
+            if r["attr_id"] == net_attr["id"]:
                 ra_id = r["id"]
 
         data = self.client.get_resource_scenario(ra_id, scenario_id, get_parent_data=False)
