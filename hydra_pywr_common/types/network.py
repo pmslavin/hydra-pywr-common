@@ -151,7 +151,10 @@ class PywrNetwork():
         import re
         from string import whitespace
         # Reverse order to avoid mutating container
-        nodes = reversed(sorted(self.nodes.values(), key=len))
+        try:
+            nodes = reversed(sorted(self.nodes.values(), key=len))
+        except:
+            breakpoint()
         seen = set()
 
         for node in nodes:

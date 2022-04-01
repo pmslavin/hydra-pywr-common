@@ -35,7 +35,7 @@ class PywrNode(PywrEntity, HydraDataset):
         PywrNode.node_type_map[cls.key] = cls
 
     def __init__(self, data, **kwargs):
-        self.name = data["name"]
+        self.name = str(data["name"])
         location = data.get("position")
         self.position = PywrPosition(location) if location else None
         if "comment" in data:
@@ -170,7 +170,6 @@ class PywrParameter(PywrEntity):
                 instkey += "parameter"
             instcls = PywrParameter.parameter_type_map.get(instkey)
             if not instcls:
-                #breakpoint()
                 instcls = PywrParameter.parameter_type_map["unknownparameter"]
 
         try:

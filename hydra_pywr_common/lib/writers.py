@@ -797,11 +797,31 @@ class NetworkTool():
 
         return types
 
+
     def initialise_hydra_connection(self):
         from hydra_client.connection import JSONConnection
         self.hydra = JSONConnection(self.hostname, session_id=self.session_id, user_id=self.user_id)
 
-    def merge_multi(self, client, template_map, project_id, water_template_id, energy_template_id, **kwargs):
+
+    def export_multi(self, client, scenario_id, network_id):
+        self.client = client
+        profile = self.get_network_profile(scenario_id, network_id)
+        breakpoint()
+
+    def get_network_profile(self, scenario_id, network_id, profile_key="network_profile"):
+        profile_attr = self.client.get_attribute_by_name_and_dimension(profile_key, None)
+        ra = self.client.get_resource_attributes("network", network_id)
+        ra_id = None
+        for r in ra:
+            if r["attr_id"] == profile_attr["id"]:
+                ra_id = r["id"]
+
+        data = self.client.get_resource_scenario(ra_id, scenario_id, get_parent_data=False)
+        attr_data = json.loads(data["dataset"]["value"])
+
+        return attr_data # NB: String keys
+
+    def merge_multi(self, client, template_map, project_id, **kwargs):
 
         self.client = client
 
@@ -811,11 +831,12 @@ class NetworkTool():
         hydra_nodes = []
         hydra_links = []
         network_attributes = []
-        network_hydratypes = []
+        network_hydratypes = set()
         resource_scenarios = []
 
         for template_id in template_map:
-            for network in template_map[template_id]:
+            for scenario in template_map[template_id]:
+                network = scenario["network"]
                 writer = PywrHydraWriter(
                             network,
                             hydra = client,
@@ -828,7 +849,7 @@ class NetworkTool():
                 next_attr_id = writer._next_attr_id
                 next_node_id = writer._next_node_id
 
-                network_hydratypes.append({ "id": writer.network_hydratype["id"], "child_template_id": template_id})
+                network_hydratypes.add((writer.network_hydratype["id"], template_id))
                 hydra_nodes += writer.hydra_nodes
                 hydra_links += writer.hydra_links
                 network_attributes += writer.network_attributes
@@ -840,6 +861,14 @@ class NetworkTool():
         network_attributes += config_attribute
         resource_scenarios += config_scenario
 
+        next_attr_id -= 1
+
+        profile_attribute, profile_scenario = self.build_network_profile_attribute(next_attr_id, template_map)
+        network_attributes += profile_attribute
+        resource_scenarios += profile_scenario
+
+        hydra_network_types = [{"id": nid, "child_template_id": tid} for (nid, tid) in network_hydratypes]
+
         baseline_scenario = {
             "name": "Baseline",
             "description": "Baseline scenario",
@@ -847,7 +876,7 @@ class NetworkTool():
         }
 
         hydra_network = {
-            "name": "Unified multi",
+            "name": "Unified multi 03",
             "description": "Unified multi desc",
             "project_id": project_id,
             "nodes": hydra_nodes,
@@ -856,17 +885,51 @@ class NetworkTool():
             "scenarios": [baseline_scenario],
             "projection": "EPSG:4326",
             "attributes": network_attributes,
-            "types": network_hydratypes
+            "types": hydra_network_types
         }
 
         client.add_network(hydra_network)
 
+
+    def build_network_profile_attribute(self, next_attr_id, template_map, attr_name="network_profile"):
+        attr = [ {"name": attr_name, "description": "Network profile"} ]
+        resp_attr = self.client.add_attributes(attr)
+
+        for tid, scenarios in template_map.items():
+            for scenario in scenarios:
+                scenario["network"] = scenario["network"].title.replace(' ', '_')
+
+
+        #attr_data = {"scenarios": scenario_map}
+        attr_data = template_map
+
+        dataset = { "name":  attr_name,
+                    "type":  "DESCRIPTOR",
+                    "value": json.dumps(attr_data),
+                    "metadata": "{}",
+                    "unit": "-",
+                    "hidden": 'N'
+                  }
+
+        local_attr_id = next_attr_id
+        resource_attribute = { "id": local_attr_id,
+                               "attr_id": resp_attr[0]["id"],
+                               "attr_is_var": "N"
+                             }
+
+        resource_scenario = { "resource_attr_id": local_attr_id,
+                              "dataset": dataset
+                            }
+
+        return [resource_attribute], [resource_scenario]
+
+
     def build_network_config_attribute(self, next_attr_id, attr_name="config"):
+
         attrs = [ {"name": attr_name, "description": "Pynsim config"} ]
         resp_attr = self.client.add_attributes(attrs)
 
-        config = {"example": "config"}
-        attr_data = {"config": config}
+        attr_data = config_template
 
         dataset = { "name":  attr_name,
                     "type":  "DESCRIPTOR",
@@ -913,13 +976,14 @@ class NetworkTool():
         hydra_links = []
         resource_scenarios = []
         hydra_network_attrs = []
-        hydra_network_types = []
+        hydra_network_types = set()
 
 
         for network in networks:
             template_id = network.types[0].template_id
             network_type = self.get_hydra_network_type(template_map[template_id])["id"]
-            hydra_network_types.append({"id": network_type, "child_template_id": template_id})
+            #hydra_network_types.append({"id": network_type, "child_template_id": template_id})
+            hydra_network_types.add((network_type, template_id))
 
             hydra_nodes += network.nodes
             hydra_links += network.links
@@ -929,6 +993,9 @@ class NetworkTool():
             resource_scenarios += non_net_scenarios
 
         baseline_scenario = self.make_baseline_scenario(resource_scenarios)
+
+        hydra_network_types = [{"id": nid, "child_template_id": tid} for (nid, tid) in hydra_network_types]
+        breakpoint()
 
         unified = {
             "name": "Unified network",
@@ -1028,3 +1095,47 @@ def build_parameter_dataset(param, times, stok='_'):
 
     return dataset
 
+
+config_template = {
+    "name": "Water-energy system",
+    "timesteps": {
+        "start": "1970-01-01",
+        "end": "1970-12-31",
+        "freq": "W"
+    },
+    "engines": [{
+            "name": "water",
+            "engine": "PywrEngine",
+            "args": ["Water_system.json"],
+            "kwargs": {
+                "output_directory": "output"
+            },
+            "end_points": [{
+                    "type": "pywr_array_recorder",
+                    "name": "HP_out",
+                    "recorder": "__node__:attr"
+                }
+            ]
+        },
+        {
+            "name": "energy",
+            "engine": "PywrEngine",
+            "args": ["Energy_system.json"],
+            "kwargs": {
+                "solver": "glpk-dcopf",
+                "output_directory": "output"
+            },
+            "end_points": [{
+                    "type": "pywr_parameter",
+                    "name": "HP_in",
+                    "parameter": "__node__:attr"
+                }
+            ]
+        }
+    ],
+    "connections": [{
+            "start": "HP_out",
+            "end": "HP_in"
+        }
+    ]
+}
