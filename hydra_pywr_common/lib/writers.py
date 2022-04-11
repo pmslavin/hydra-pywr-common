@@ -1,4 +1,5 @@
 import json
+from collections import defaultdict
 from numbers import Number
 import pandas as pd
 
@@ -9,7 +10,9 @@ from pywrparser.types import (
     PywrParameter,
     PywrRecorder,
     PywrTimestepper,
-    PywrMetadata
+    PywrMetadata,
+    PywrNode,
+    PywrEdge
 )
 
 
@@ -249,8 +252,39 @@ class NewPywrHydraWriter():
         """ Build network elements and resource_scenarios with datasets """
         self.hydra_nodes, node_scenarios = self.build_hydra_nodes()
 
-        self.network_attributes, network_scenarios = self.build_network_attributes()
-        breakpoint()
+        if domain:
+            self.network_attributes, network_scenarios = self.build_network_descriptor_attributes(domain)
+        else:
+            self.network_attributes, network_scenarios = self.build_network_attributes()
+
+        self.hydra_links, link_scenarios = self.build_hydra_links()
+        paramrec_attrs, paramrec_scenarios = self.build_parameters_recorders()
+
+        self.network_attributes += paramrec_attrs
+
+        self.resource_scenarios = node_scenarios + network_scenarios + link_scenarios + paramrec_scenarios
+
+        """ Create baseline scenario with resource_scenarios """
+        baseline_scenario = self.make_baseline_scenario(self.resource_scenarios)
+
+        """ Assemble complete network """
+        network_name = self.network.metadata.data["title"]
+        network_description = self.network.metadata.data["description"]
+        self.network_hydratype = self.get_hydra_network_type()
+
+        self.hydra_network = {
+            "name": network_name,
+            "description": network_description,
+            "project_id": self.project_id,
+            "nodes": self.hydra_nodes,
+            "links": self.hydra_links,
+            "layout": None,
+            "scenarios": [baseline_scenario],
+            "projection": self.projection,
+            "attributes": self.network_attributes,
+            "types": [{ "id": self.network_hydratype["id"], "child_template_id": self.template_id }]
+        }
+        return self.hydra_network
 
     def build_network_attributes(self):
         exclude_metadata_attrs = ("title", "description", "projection")
@@ -347,6 +381,7 @@ class NewPywrHydraWriter():
         resource_scenario = { "resource_attr_id": local_attr_id,
                               "dataset": dataset
                             }
+        return resource_scenario
 
     def make_paramrec_resource_scenario(self, element, attr_name, local_attr_id):
 
@@ -364,6 +399,7 @@ class NewPywrHydraWriter():
         resource_scenario = { "resource_attr_id": local_attr_id,
                               "dataset": dataset
                             }
+        return resource_scenario
 
     def make_resource_scenario(self, element, attr_name, local_attr_id):
 
@@ -423,7 +459,7 @@ class NewPywrHydraWriter():
         for node in self.network.nodes.values():
             resource_attributes = []
 
-            exclude = ("position", "type")
+            exclude = ("name", "position", "type", "comment")
 
             for attr_name in node.data:
                 if attr_name in exclude:
@@ -457,6 +493,94 @@ class NewPywrHydraWriter():
             hydra_nodes.append(hydra_node)
 
         return hydra_nodes, resource_scenarios
+
+    def build_hydra_links(self):
+        hydra_links = []
+        resource_scenarios = []
+
+        for edge in self.network.edges:
+            resource_attributes = []
+
+            src = edge.data[0]
+            dest = edge.data[1]
+            name = f"{src} to {dest}"
+
+            hydra_link = {}
+            hydra_link["resource_type"] = "LINK"
+            hydra_link["id"] = self.get_next_link_id()
+            hydra_link["name"] = name
+            hydra_link["node_1_id"] = self.get_node_by_name(src)["id"]
+            hydra_link["node_2_id"] = self.get_node_by_name(dest)["id"]
+            hydra_link["layout"] = {}
+            hydra_link["resource_attributes"] = resource_attributes
+            hydra_link["types"] = [{ "id": self.get_typeid_by_name("edge") }]
+
+            hydra_links.append(hydra_link)
+
+        return hydra_links, resource_scenarios
+
+    def build_parameters_recorders(self):
+        resource_attrs = []
+        resource_scenarios = []
+
+        for param_name, param in self.network.parameters.items():
+            ra, rs = self.make_resource_attr_and_scenario(param, param_name)
+            resource_attrs.append(ra)
+            resource_scenarios.append(rs)
+
+        for rec_name, rec in self.network.recorders.items():
+            ra, rs = self.make_resource_attr_and_scenario(rec, rec_name)
+            resource_attrs.append(ra)
+            resource_scenarios.append(rs)
+
+        return resource_attrs, resource_scenarios
+
+    def build_network_descriptor_attributes(self, attr_key):
+
+        attr_name = f"{attr_key}_data"
+        attrs = [ make_hydra_attr(attr_name) ]
+        self.hydra_attributes += self.hydra.add_attributes(attrs)
+
+        scenarios = None
+        tables = None
+
+        timestepper = self.network.timestepper.data
+        metadata = self.network.metadata.data
+        tables = [ table.data for table in self.network.tables.values() ]
+        scenarios = [ scenario.data for scenario in self.network.scenarios.values() ]
+
+        attr_data = {"timestepper": timestepper,
+                     "metadata": metadata
+                    }
+        if tables:
+            attr_data["tables"] = tables
+        if scenarios:
+            attr_data["scenarios"] = scenarios
+
+        dataset = { "name":  attr_name,
+                    "type":  "DESCRIPTOR",
+                    "value": json.dumps(attr_data),
+                    "metadata": "{}",
+                    "unit": "-",
+                    "hidden": 'N'
+                  }
+
+        local_attr_id = self.get_next_attr_id()
+        resource_attribute = { "id": local_attr_id,
+                               "attr_id": self.get_hydra_attrid_by_name(attr_name),
+                               "attr_is_var": "N"
+                             }
+
+        resource_scenario = { "resource_attr_id": local_attr_id,
+                              "dataset": dataset
+                            }
+
+        return [resource_attribute], [resource_scenario]
+
+    def add_network_to_hydra(self):
+        """ Pass network to Hydra"""
+        self.hydra.add_network(self.hydra_network)
+
 
 class PywrHydraWriter():
 
@@ -960,6 +1084,168 @@ class PywrHydraIntegratedWriter():
         """ Pass network to Hydra"""
         self.hydra.add_network(self.hydra_network)
 
+"""
+    Hydra => PywrNetwork
+"""
+
+class HydraToPywrNetwork():
+
+    exclude_hydra_attrs = (
+        "id", "status", "cr_date",
+        "network_id", "x", "y",
+        "types", "attributes", "layout",
+        "network", "description"
+    )
+
+    def __init__(self, client, network, scenario_id, attributes, template, **kwargs):
+        self.hydra = client
+        self.data = network
+        self.scenario_id = scenario_id
+        self.attributes = attributes
+        self.template = template
+
+        self.type_id_map = {}
+        for tt in self.template.templatetypes:
+            self.type_id_map[tt.id] = tt
+
+        self.attr_unit_map = {}
+        self.hydra_node_by_id = {}
+
+        self._parameter_recorder_flags = {}
+        self._inline_parameter_recorder_flags = defaultdict(dict)
+        self._node_recorder_flags = {}
+
+        self.nodes = {}
+        self.edges = []
+        self.parameters = {}
+        self.recorders = {}
+        self.tables = {}
+        self.scenarios = []
+
+
+    def write_rules_as_module(self):
+        filename = "hydra_pywr_custom_module.py"
+
+        prelude = (
+            "from pywr import recorders",
+            "from pywr import parameters",
+            "import pandas",
+            "import numpy as np",
+            "import scipy",
+            "from pywr.nodes import *",
+            "from pywr.parameters.control_curves import *",
+            "from pywr.parameters._thresholds import *",
+            "from pywr.parameters._hydropower import *",
+            "from pywr.domains.river import *"
+        )
+
+        forbidden = ("import", "eval", "exec")
+
+        with open(filename, 'w') as fp:
+            for p in prelude:
+                fp.write(f"{p}\n")
+            fp.write("\n")
+            for rule in self.data.rules:
+                for forbid in forbidden:
+                    if forbid in rule["value"]:
+                        raise PermissionError(f"Use of {forbid} statement forbidden in custom rules.")
+                fp.write(rule["value"])
+                fp.write("\n\n")
+
+
+    def build_pywr_network(self):
+        self.build_pywr_nodes()
+        breakpoint()
+
+        return self
+
+
+    def build_pywr_nodes(self):
+
+        for node in self.data["nodes"]:
+            pywr_node = {"name": node["name"]}
+
+            self.hydra_node_by_id[node["id"]] = node
+
+            if node.get("description", None) is not None:
+                pywr_node["comment"] = node['description']
+
+            # Get the type for this node from the template
+            pywr_node_type = None
+            real_template_id = node["types"][0]["template_id"]
+
+            for node_type in node["types"]:
+                try:
+                    #log.info(f"====\nnode: {node}")
+                    if real_template_id != self.template["id"]:
+                        continue
+                    pywr_node_type = self.type_id_map[node_type["id"]]["name"]
+                    break
+                except KeyError:
+                    # Skip as not in this template...
+                    pywr_node_type = None
+                    continue
+
+            #log.info(f"Found node type {pywr_node_type} for node {node['name']} with nt_id {node_type['id']} on template {self.template['id']}\n====")
+
+            #if pywr_node_type is None:
+            #    raise ValueError('Template does not contain node of type "{}".'.format(pywr_node_type))
+
+            # Skip if not in this template...
+            if pywr_node_type:
+                #log.info(f"Building node {node['name']} as {pywr_node_type}...")
+                self.build_node_and_references(node, pywr_node_type)
+
+
+    def _get_resource_scenario(self, resource_attribute_id):
+
+        for scenario in self.data["scenarios"]:
+            for resource_scenario in scenario["resourcescenarios"]:
+                if resource_scenario["resource_attr_id"] == resource_attribute_id:
+                    return resource_scenario
+
+        raise ValueError(f"No resource scenario found for resource attribute id: {resource_attribute_id}")
+
+
+    def build_node_and_references(self, nodedata, pywr_node_type):
+
+        for resource_attribute in nodedata["attributes"]:
+            attribute = self.attributes[resource_attribute["attr_id"]]
+            try:
+                resource_scenario = self._get_resource_scenario(resource_attribute["id"])
+            except ValueError:
+                continue  # No data associated with this attribute.
+
+            # Allow export of probable recorders
+            if resource_attribute["attr_is_var"] == 'Y' and recorder not in attribute["name"].lower():
+                continue
+
+            attribute_name = attribute["name"]
+            dataset = resource_scenario["dataset"]
+            dataset_type = dataset["type"]
+            value = dataset["value"]
+
+            try:
+                typedval = json.loads(value)
+            except json.decoder.JSONDecodeError as e:
+                typedval = value
+            nodedata[attribute_name] = typedval
+
+        nodedata["type"] = pywr_node_type
+        node_attr_data = {a:v for a,v in nodedata.items() if a not in self.exclude_hydra_attrs}
+        position = {"geographic": [ nodedata.get("x",0), nodedata.get("y",0) ]}
+        node_attr_data["position"] = position
+
+        if "comment" in node_attr_data:
+            del node_attr_data["comment"]
+        if "description" in nodedata:
+            node_attr_data["comment"] = nodedata.get("description")
+
+        node = PywrNode(node_attr_data)
+
+        self.nodes[node.name] = node
+        #self.parameters.update(node.parameters)
+        #self.recorders.update(node.recorders)
 
 """
     Integrated model output.h5 => Updated Hydra network
