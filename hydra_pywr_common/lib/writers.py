@@ -11,6 +11,8 @@ from pywrparser.types import (
     PywrRecorder,
     PywrTimestepper,
     PywrMetadata,
+    PywrTable,
+    PywrScenario,
     PywrNode,
     PywrEdge
 )
@@ -244,7 +246,9 @@ class NewPywrHydraWriter():
 
         self.initialise_hydra_connection()
 
-        self.network.attach_parameters()
+        #self.network.attach_parameters()
+        self.network.detach_parameters()
+
 
         self.template_attributes = self.collect_template_attributes()
         self.hydra_attributes = self.register_hydra_attributes()
@@ -307,6 +311,36 @@ class NewPywrHydraWriter():
                 hydra_network_attrs.append(ra)
                 resource_scenarios.append(rs)
 
+        scenario_data = [ scenario.data for scenario in self.network.scenarios ]
+        if scenario_data:
+            attr_name = "scenarios"
+            ra, rs = self.make_direct_resource_attr_and_scenario(
+                    {"scenarios": scenario_data},
+                    attr_name,
+                    "PYWR_SCENARIOS"
+            )
+            """
+            dataset = { "name":  attr_name,
+                        "type":  "PYWR_SCENARIOS",
+                        "value": json.dumps({"scenarios": scenario_data}),
+                        "metadata": "{}",
+                        "unit": "-",
+                        "hidden": 'N'
+                      }
+
+            local_attr_id = self.get_next_attr_id()
+            resource_attribute = { "id": local_attr_id,
+                                   "attr_id": self.get_hydra_attrid_by_name(attr_name),
+                                   "attr_is_var": "N"
+                                 }
+
+            resource_scenario = { "resource_attr_id": local_attr_id,
+                                  "dataset": dataset
+                                }
+            """
+            hydra_network_attrs.append(ra)
+            resource_scenarios.append(rs)
+
         return hydra_network_attrs, resource_scenarios
 
     def collect_template_attributes(self):
@@ -322,6 +356,8 @@ class NewPywrHydraWriter():
         timestepper_attrs = { 'timestepper.start', 'timestepper.end', 'timestepper.timestep'}
         excluded_attrs = { 'position', 'type' }
         pending_attrs = timestepper_attrs
+
+        pending_attrs.add("scenarios")
 
         for node in self.network.nodes.values():
             for attr_name in node.data:
@@ -340,23 +376,49 @@ class NewPywrHydraWriter():
             for attr_name in table.data.keys():
                 pending_attrs.add(f"tbl_{table_name}.{attr_name}")
 
+        #for scenario in self.network.scenarios:
+        #    pending_attrs.add(f"scenario_{scenario.name}")
+
         attrs = [ make_hydra_attr(attr_name) for attr_name in pending_attrs - excluded_attrs.union(set(self.template_attributes.keys())) ]
 
         return self.hydra.add_attributes(attrs)
+
 
     def make_resource_attr_and_scenario(self, element, attr_name, datatype=None):
         local_attr_id = self.get_next_attr_id()
 
         if isinstance(element, (PywrParameter, PywrRecorder)):
             resource_scenario = self.make_paramrec_resource_scenario(element, attr_name, local_attr_id)
-            #attr_id = self.get_hydra_attrid_by_name(attr_name)
-        elif isinstance(element, (PywrMetadata, PywrTimestepper)):
+        elif isinstance(element, (PywrMetadata, PywrTimestepper, PywrTable)):
             base, name = attr_name.split('.')
-            #attr_id = self.get_hydra_attrid_by_name(attr_name)
-            resource_scenario = self.make_resource_scenario(element, name, local_attr_id)
+            resource_scenario = self.make_network_resource_scenario(element, name, local_attr_id)
         else:
             resource_scenario = self.make_resource_scenario(element, attr_name, local_attr_id)
-            #attr_id = self.get_hydra_attrid_by_name(attr_name)
+
+        resource_attribute = { "id": local_attr_id,
+                               "attr_id": self.get_hydra_attrid_by_name(attr_name),
+                               "attr_is_var": "N"
+                             }
+
+        return resource_attribute, resource_scenario
+
+
+    def make_direct_resource_attr_and_scenario(self, value, attr_name, hydra_datatype):
+
+        local_attr_id = self.get_next_attr_id()
+
+        dataset = { "name":  attr_name,
+                    "type":  hydra_datatype,
+                    "value": json.dumps(value),
+                    "metadata": "{}",
+                    "unit": "-",
+                    "hidden": 'N'
+                  }
+
+        resource_scenario = { "resource_attr_id": local_attr_id,
+                              "dataset": dataset
+                            }
+
         resource_attribute = { "id": local_attr_id,
                                "attr_id": self.get_hydra_attrid_by_name(attr_name),
                                "attr_is_var": "N"
@@ -372,7 +434,7 @@ class NewPywrHydraWriter():
 
         dataset = { "name":  attr_name,
                     "type":  hydra_datatype,
-                    "value": json.dumps(value),
+                    "value": value,
                     "metadata": "{}",
                     "unit": "-",
                     "hidden": 'N'
@@ -451,6 +513,9 @@ class NewPywrHydraWriter():
         elif isinstance(attr_value, PywrRecorder):
             return self.lookup_recorder_hydra_datatype(attr_value)
 
+        """ TODO raise """
+        breakpoint()
+
 
     def build_hydra_nodes(self):
         hydra_nodes = []
@@ -474,8 +539,8 @@ class NewPywrHydraWriter():
             hydra_node["resource_type"] = "NODE"
             hydra_node["id"] = self.get_next_node_id()
             hydra_node["name"] = node.name
-            if "comment" in node.data:
-                hydra_node["description"] = node.data["comment"]
+            if comment := node.data.get("comment"):
+                hydra_node["description"] = comment
             hydra_node["layout"] = {}
             hydra_node["attributes"] = resource_attributes
             hydra_node["types"] = [{ "id": self.get_typeid_by_name(node.type),
@@ -547,7 +612,7 @@ class NewPywrHydraWriter():
         timestepper = self.network.timestepper.data
         metadata = self.network.metadata.data
         tables = [ table.data for table in self.network.tables.values() ]
-        scenarios = [ scenario.data for scenario in self.network.scenarios.values() ]
+        scenarios = [ scenario.data for scenario in self.network.scenarios ]
 
         attr_data = {"timestepper": timestepper,
                      "metadata": metadata
@@ -790,8 +855,6 @@ class PywrHydraWriter():
 
 
     def make_resource_scenario(self, element, attr_name, local_attr_id, datatype=None):
-        #if attr_name == "BR_DRC_capacity":
-        #    breakpoint()
         if hasattr(element, "hydra_data_type") and element.hydra_data_type.startswith(("PYWR_PARAMETER", "PYWR_RECORDER")):
             dataset = self.make_paramrec_dataset(element)
         else:
@@ -1153,9 +1216,16 @@ class HydraToPywrNetwork():
                 fp.write("\n\n")
 
 
-    def build_pywr_network(self):
+    def build_pywr_network(self, domain=None):
         self.build_pywr_nodes()
-        breakpoint()
+        self.edges = self.build_edges()
+        self.parameters, self.recorders = self.build_parameters_recorders()
+        if domain:
+            self.timestepper, self.metadata, self.scenarios = self.build_integrated_network_attrs(domain)
+        else:
+            self.timestepper, self.metadata, self.tables, self.scenarios = self.build_network_attrs()
+
+        self.write_rules_as_module()
 
         return self
 
@@ -1167,8 +1237,8 @@ class HydraToPywrNetwork():
 
             self.hydra_node_by_id[node["id"]] = node
 
-            if node.get("description", None) is not None:
-                pywr_node["comment"] = node['description']
+            if comment := node.get("description"):
+                pywr_node["comment"] = comment
 
             # Get the type for this node from the template
             pywr_node_type = None
@@ -1196,6 +1266,171 @@ class HydraToPywrNetwork():
                 #log.info(f"Building node {node['name']} as {pywr_node_type}...")
                 self.build_node_and_references(node, pywr_node_type)
 
+
+    def build_edges(self):
+        edges = []
+
+        for hydra_edge in self.data["links"]:
+            src_hydra_node = self.hydra_node_by_id[hydra_edge["node_1_id"]]
+            dest_hydra_node = self.hydra_node_by_id[hydra_edge["node_2_id"]]
+            # Retrieve nodes from PywrNode store to verify presence
+            try:
+                src_node = self.nodes[src_hydra_node["name"]]
+                dest_node = self.nodes[dest_hydra_node["name"]]
+            except KeyError:
+                # Not in this template...
+                continue
+
+            edge = PywrEdge([src_node.name, dest_node.name])
+            edges.append(edge)
+
+        return edges
+
+
+    def build_parameters_recorders(self):
+        # attr_id = data.network.attributes[x].id
+        parameters = {} # {name: P()}
+        recorders = {} # {name: R()}
+
+        for attr in self.data.attributes:
+            ds = self.get_dataset_by_attr_id(attr.id)
+            if not ds:
+                continue
+            if not ds["type"].startswith(("PYWR_PARAMETER", "PYWR_RECORDER")):
+                continue
+            if ds["type"].startswith("PYWR_PARAMETER"):
+                value = json.loads(ds["value"])
+                p = PywrParameter(ds["name"], value)
+                parameters[p.name] = p
+            elif ds["type"].startswith("PYWR_RECORDER"):
+                value = json.loads(ds["value"])
+                try:
+                    r = PywrRecorder(ds["name"], value)
+                except:
+                    breakpoint()
+                recorders[r.name] = r
+
+        return parameters, recorders
+
+    def build_network_attrs(self):
+        """ TimeStepper, Metadata, and Tables instances """
+
+        timestep = {}
+        ts_keys = ("start", "end", "timestep")
+
+        for attr in self.data["attributes"]:
+            attr_group, *subs = attr.name.split('.')
+            if attr_group != "timestepper":
+                continue
+            dataset = self.get_dataset_by_attr_id(attr.id)
+            ts_key = subs[-1]
+            try:
+                value = json.loads(dataset["value"])
+            except json.decoder.JSONDecodeError:
+                value = dataset["value"]
+            timestep[ts_key] = value
+
+
+        ts_val = timestep.get("timestep",1)
+        try:
+            tv = int(float(ts_val))
+        except ValueError:
+            tv = ts_val
+        timestep["timestep"] = tv
+        ts_inst = PywrTimestepper(timestep)
+
+        """ Metadata """
+        metadata = {"title": self.data['name'],
+                    "description": self.data['description']
+                   }
+        for attr in self.data["attributes"]:
+            attr_group, *subs = attr.name.split('.')
+            if attr_group != "metadata":
+                continue
+            dataset = self.get_dataset_by_attr_id(attr.id)
+            meta_key = subs[-1]
+            try:
+                value = json.loads(dataset["value"])
+            except json.decoder.JSONDecodeError:
+                value = dataset["value"]
+            metadata[meta_key] = value
+
+        meta_inst = PywrMetadata(metadata)
+
+        """ Tables """
+
+        table_prefix = "tbl_"
+        tables_data = defaultdict(dict)
+        tables = {}
+        for attr in self.data["attributes"]:
+            if not attr.name.startswith(table_prefix):
+                continue
+            table_name, table_attr = attr.name[len(table_prefix):].split('.')
+            dataset = self.get_dataset_by_attr_id(attr.id)
+            try:
+                value = json.loads(dataset["value"])
+            except json.decoder.JSONDecodeError:
+                value = dataset["value"]
+            tables_data[table_name][table_attr] = value
+
+        for tname, tdata in tables_data.items():
+            tables[tname] = PywrTable(tname, tdata)
+
+        """ Scenarios """
+
+        scenarios_dataset = self.get_network_attr(self.scenario_id, self.data["id"], "scenarios")
+        scenarios = [ PywrScenario(scenario) for scenario in scenarios_dataset["scenarios"] ]
+
+        return ts_inst, meta_inst, tables, scenarios
+
+
+    def build_integrated_network_attrs(self, domain):
+        domain_data_key = f"{domain}_data"
+        domain_attr = self.get_attr_by_name(domain_data_key)
+        dataset = self.get_dataset_by_attr_id(domain_attr.id)
+        data = json.loads(dataset["value"])
+
+        timestep = data["timestepper"]
+        ts_val = timestep.get("timestep",1)
+        try:
+            tv = int(float(ts_val))
+        except ValueError:
+            tv = ts_val
+
+        timestep["timestep"] = tv
+        ts_inst = PywrTimestepper(timestep)
+
+        metadata = data["metadata"]
+        meta_inst = PywrMetadata(metadata)
+
+        scen_insts = [ PywrScenario(s) for s in data.get("scenarios") ]
+
+        return ts_inst, meta_inst, scen_insts
+
+
+    def get_network_attr(self, scenario_id, network_id, attr_key):
+        net_attr = self.hydra.get_attribute_by_name_and_dimension(attr_key, None)
+        ra = self.hydra.get_resource_attributes("network", network_id)
+        ra_id = None
+        for r in ra:
+            if r["attr_id"] == net_attr["id"]:
+                ra_id = r["id"]
+
+        data = self.hydra.get_resource_scenario(ra_id, scenario_id, get_parent_data=False)
+        attr_data = json.loads(data["dataset"]["value"])
+
+        return attr_data # NB: String keys
+
+
+    def get_dataset_by_attr_id(self, attr_id):
+        # d = data.scenarios[0].resourcescenarios[x]
+        # d.resource_attr_id == attr_id
+        # d.dataset
+
+        scenario = self.data.scenarios[0]
+        for rs in scenario.resourcescenarios:
+            if rs.resource_attr_id == attr_id:
+                return rs.dataset
 
     def _get_resource_scenario(self, resource_attribute_id):
 
@@ -1236,10 +1471,8 @@ class HydraToPywrNetwork():
         position = {"geographic": [ nodedata.get("x",0), nodedata.get("y",0) ]}
         node_attr_data["position"] = position
 
-        if "comment" in node_attr_data:
-            del node_attr_data["comment"]
-        if "description" in nodedata:
-            node_attr_data["comment"] = nodedata.get("description")
+        if comment := nodedata.get("description"):
+            node_attr_data["comment"] = comment
 
         node = PywrNode(node_attr_data)
 
