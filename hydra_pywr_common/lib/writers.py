@@ -6,6 +6,7 @@ import pandas as pd
 from hydra_pywr.exporter import PywrHydraExporter
 from hydra_pywr_common.types.network import PywrNetwork
 
+from pywrparser.types.network import PywrNetwork as NewPywrNetwork
 from pywrparser.types import (
     PywrParameter,
     PywrRecorder,
@@ -187,7 +188,7 @@ class NewPywrHydraWriter():
 
     def get_typeid_by_name(self, name):
         for t in self.template["templatetypes"]:
-            if t["name"] == name:
+            if t["name"].lower() == name.lower():
                 return t["id"]
 
     def get_hydra_network_type(self):
@@ -246,8 +247,8 @@ class NewPywrHydraWriter():
 
         self.initialise_hydra_connection()
 
-        #self.network.attach_parameters()
-        self.network.detach_parameters()
+        self.network.attach_parameters()
+        #self.network.detach_parameters()
 
 
         self.template_attributes = self.collect_template_attributes()
@@ -543,7 +544,7 @@ class NewPywrHydraWriter():
                 hydra_node["description"] = comment
             hydra_node["layout"] = {}
             hydra_node["attributes"] = resource_attributes
-            hydra_node["types"] = [{ "id": self.get_typeid_by_name(node.type),
+            hydra_node["types"] = [{ "id": self.get_typeid_by_name(node.type.lower()),
                                      "child_template_id": self.template_id
                                   }]
 
@@ -1186,6 +1187,23 @@ class HydraToPywrNetwork():
         self.scenarios = []
 
 
+    @classmethod
+    def from_scenario_id(cls, client, scenario_id, template_id=None, index=0):
+
+        scenario = client.get_scenario(scenario_id, include_data=True, include_results=False, include_metadata=False, include_attr=False)
+        network = client.get_network(scenario.network_id, include_data=True, include_results=False, template_id=None)
+        network.scenarios = [scenario]
+        network.rules = client.get_resource_rules('NETWORK', scenario.network_id)
+
+        attributes = client.get_attributes()
+        attributes = {attr.id: attr for attr in attributes}
+
+        print(f"Retreiving template {network.types[index].template_id}")
+        template = client.get_template(network.types[index].template_id)
+
+        return cls(client, network, scenario_id, attributes, template)
+
+
     def write_rules_as_module(self):
         filename = "hydra_pywr_custom_module.py"
 
@@ -1220,12 +1238,14 @@ class HydraToPywrNetwork():
         self.build_pywr_nodes()
         self.edges = self.build_edges()
         self.parameters, self.recorders = self.build_parameters_recorders()
+        breakpoint()
         if domain:
             self.timestepper, self.metadata, self.scenarios = self.build_integrated_network_attrs(domain)
         else:
             self.timestepper, self.metadata, self.tables, self.scenarios = self.build_network_attrs()
 
-        self.write_rules_as_module()
+        if len(self.data.rules) > 0:
+            self.write_rules_as_module()
 
         return self
 
@@ -1378,8 +1398,11 @@ class HydraToPywrNetwork():
 
         """ Scenarios """
 
-        scenarios_dataset = self.get_network_attr(self.scenario_id, self.data["id"], "scenarios")
-        scenarios = [ PywrScenario(scenario) for scenario in scenarios_dataset["scenarios"] ]
+        try:
+            scenarios_dataset = self.get_network_attr(self.scenario_id, self.data["id"], "scenarios")
+            scenarios = [ PywrScenario(scenario) for scenario in scenarios_dataset["scenarios"] ]
+        except ValueError as e:
+            scenarios = []
 
         return ts_inst, meta_inst, tables, scenarios
 
@@ -1415,6 +1438,9 @@ class HydraToPywrNetwork():
         for r in ra:
             if r["attr_id"] == net_attr["id"]:
                 ra_id = r["id"]
+
+        if not ra_id:
+            raise ValueError(f"Resource attribute for {attr_key} not found in scenario {scenario_id} on network {network_id}")
 
         data = self.hydra.get_resource_scenario(ra_id, scenario_id, get_parent_data=False)
         attr_data = json.loads(data["dataset"]["value"])
@@ -1474,6 +1500,8 @@ class HydraToPywrNetwork():
         if comment := nodedata.get("description"):
             node_attr_data["comment"] = comment
 
+        if node_attr_data["name"] == "BR_Existing_turbine":
+            breakpoint()
         node = PywrNode(node_attr_data)
 
         self.nodes[node.name] = node
@@ -1713,12 +1741,12 @@ class NetworkTool():
                 scenario_id = net_desc["scenario_id"]
                 net_name = net_desc["network"]
 
-                exporter = PywrHydraExporter.from_scenario_id(client, scenario_id)
-                data = exporter.get_pywr_data()
-                pnet = PywrNetwork(data)
-                #net_desc["net_inst"] = pnet
-                writer = PywrJsonWriter(pnet)
-                output = writer.as_dict()
+                #exporter = PywrHydraExporter.from_scenario_id(client, scenario_id)
+                exporter = HydraToPywrNetwork.from_scenario_id(client, scenario_id)
+                network_data = exporter.build_pywr_network()
+                pywr_network = NewPywrNetwork(network_data)
+                #writer = PywrJsonWriter(pnet)
+                output = pywr_network.as_dict()
                 outfile = f"{net_name}.json"
                 with open(outfile, mode='w') as fp:
                     json.dump(output, fp, indent=2)
@@ -1740,6 +1768,7 @@ class NetworkTool():
 
         return attr_data # NB: String keys
 
+
     def merge_multi(self, client, template_map, project_id, **kwargs):
 
         self.client = client
@@ -1756,7 +1785,7 @@ class NetworkTool():
         for template_id in template_map:
             for scenario in template_map[template_id]:
                 network = scenario["network"]
-                writer = PywrHydraWriter(
+                writer = NewPywrHydraWriter(
                             network,
                             hydra = client,
                             template_id = template_id,
