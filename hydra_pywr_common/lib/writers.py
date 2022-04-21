@@ -18,6 +18,9 @@ from pywrparser.types import (
     PywrEdge
 )
 
+import logging
+log = logging.getLogger(__name__)
+
 
 PARAMETER_HYDRA_TYPE_MAP = {
     "aggregatedparameter": "PYWR_PARAMETER_AGGREGATED",
@@ -532,6 +535,7 @@ class NewPywrHydraWriter():
                     continue
                 ra, rs = self.make_resource_attr_and_scenario(node, attr_name)
                 if ra["attr_id"] == None:
+                    """ TODO raise """
                     breakpoint()
                 resource_attributes.append(ra)
                 resource_scenarios.append(rs)
@@ -890,10 +894,10 @@ class PywrHydraWriter():
         for node in self.network.nodes.values():
             resource_attributes = []
 
-            # TODO Move this to node ctor path???
             for attr_name in filter(lambda a: a not in exclude_node_attrs, node.intrinsic_attrs):
                 ra, rs = self.make_resource_attr_and_scenario(node, attr_name)
                 if ra["attr_id"] == None:
+                    """ TODO raise """
                     breakpoint()
                 resource_attributes.append(ra)
                 resource_scenarios.append(rs)
@@ -1190,7 +1194,7 @@ class HydraToPywrNetwork():
     @classmethod
     def from_scenario_id(cls, client, scenario_id, template_id=None, index=0):
 
-        scenario = client.get_scenario(scenario_id, include_data=True, include_results=False, include_metadata=False, include_attr=False)
+        scenario = client.get_scenario(scenario_id, include_data=True, include_results=False, include_metadata=True, include_attr=False)
         network = client.get_network(scenario.network_id, include_data=True, include_results=False, template_id=None)
         network.scenarios = [scenario]
         network.rules = client.get_resource_rules('NETWORK', scenario.network_id)
@@ -1238,7 +1242,6 @@ class HydraToPywrNetwork():
         self.build_pywr_nodes()
         self.edges = self.build_edges()
         self.parameters, self.recorders = self.build_parameters_recorders()
-        breakpoint()
         if domain:
             self.timestepper, self.metadata, self.scenarios = self.build_integrated_network_attrs(domain)
         else:
@@ -1295,8 +1298,9 @@ class HydraToPywrNetwork():
             dest_hydra_node = self.hydra_node_by_id[hydra_edge["node_2_id"]]
             # Retrieve nodes from PywrNode store to verify presence
             try:
-                src_node = self.nodes[src_hydra_node["name"]]
-                dest_node = self.nodes[dest_hydra_node["name"]]
+                # NB Lookup nodes with str key: self.nodes is Dict[str:PywrNode]
+                src_node = self.nodes[str(src_hydra_node["name"])]
+                dest_node = self.nodes[str(dest_hydra_node["name"])]
             except KeyError:
                 # Not in this template...
                 continue
@@ -1315,19 +1319,21 @@ class HydraToPywrNetwork():
         for attr in self.data.attributes:
             ds = self.get_dataset_by_attr_id(attr.id)
             if not ds:
+                raise ValueError(f"No dataset found for attr name {attr.name} with id {attr.id}")
                 continue
             if not ds["type"].startswith(("PYWR_PARAMETER", "PYWR_RECORDER")):
                 continue
             if ds["type"].startswith("PYWR_PARAMETER"):
                 value = json.loads(ds["value"])
                 p = PywrParameter(ds["name"], value)
+                assert p.name not in parameters    # Disallow overwriting
                 parameters[p.name] = p
             elif ds["type"].startswith("PYWR_RECORDER"):
                 value = json.loads(ds["value"])
                 try:
                     r = PywrRecorder(ds["name"], value)
                 except:
-                    breakpoint()
+                    raise ValueError(f"Dataset {ds['name']} is not a valid Recorder")
                 recorders[r.name] = r
 
         return parameters, recorders
@@ -1500,8 +1506,6 @@ class HydraToPywrNetwork():
         if comment := nodedata.get("description"):
             node_attr_data["comment"] = comment
 
-        if node_attr_data["name"] == "BR_Existing_turbine":
-            breakpoint()
         node = PywrNode(node_attr_data)
 
         self.nodes[node.name] = node
@@ -1745,6 +1749,8 @@ class NetworkTool():
                 exporter = HydraToPywrNetwork.from_scenario_id(client, scenario_id)
                 network_data = exporter.build_pywr_network()
                 pywr_network = NewPywrNetwork(network_data)
+                pywr_network.attach_parameters()
+                pywr_network.detach_parameters()
                 #writer = PywrJsonWriter(pnet)
                 output = pywr_network.as_dict()
                 outfile = f"{net_name}.json"
@@ -1793,7 +1799,7 @@ class NetworkTool():
                          )
                 writer._next_attr_id = next_attr_id
                 writer._next_node_id = next_node_id
-                hydra_net = writer.build_hydra_network(projection="EPSG:4326", domain=network.title.replace(' ','_'))
+                hydra_net = writer.build_hydra_network(projection="EPSG:4326", domain=network.metadata.data["title"].replace(' ','_'))
                 next_attr_id = writer._next_attr_id
                 next_node_id = writer._next_node_id
 
@@ -1824,7 +1830,7 @@ class NetworkTool():
         }
 
         hydra_network = {
-            "name": "Unified multi 03",
+            "name": "Unified multi 00",
             "description": "Unified multi desc",
             "project_id": project_id,
             "nodes": hydra_nodes,
@@ -1845,7 +1851,7 @@ class NetworkTool():
 
         for tid, scenarios in template_map.items():
             for scenario in scenarios:
-                scenario["network"] = scenario["network"].title.replace(' ', '_')
+                scenario["network"] = scenario["network"].metadata.data["title"].replace(' ', '_')
 
 
         #attr_data = {"scenarios": scenario_map}
