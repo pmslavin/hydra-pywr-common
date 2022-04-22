@@ -28,3 +28,17 @@ class IntegratedModelRunner():
         write_output(out.decode())
         write_output(err.decode())
         """
+
+
+class MultiNetworkRunner():
+
+    def __init__(self, model_config_filename):
+        self.model_config_filename = model_config_filename
+
+
+    def run_subprocess(self, cmd, cmdarg="run" ):
+        pargs = (cmd, cmdarg, self.model_config_filename)
+
+        proc = subprocess.Popen(pargs, stdout=subprocess.PIPE)
+        out = proc.communicate()
+        write_output("Model run complete")
