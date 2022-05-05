@@ -19,7 +19,10 @@ class IntegratedModelRunner():
         #with open(outfile, 'w') as fp:
         #    json.dump(self.pynsim_config, fp)
         proc_env = os.environ.copy()
-        proc_env["PYTHONPATH"] = ".:/app:" + proc_env["PYTHONPATH"]
+        if "PYTHONPATH" in proc_env:
+            proc_env["PYTHONPATH"] = ".:/app:" + proc_env["PYTHONPATH"]
+        else:
+            proc_env["PYTHONPATH"] = ".:/app"
         pargs = (fdf, fdfcmd, self.pynsim_config)
         write_output(f"Begin model run using: {pargs=}...")
         write_output(f"Python env: {proc_env['PYTHONPATH']}...")
