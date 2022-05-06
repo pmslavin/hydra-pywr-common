@@ -669,6 +669,8 @@ class IntegratedOutputWriter():
         resource_scenarios = []
         volumetric_flow_rate_dim = "Volumetric flow rate"
 
+        seen_raids = set()
+
         for (node_name, attr), data in node_metrics.items():
             hydra_node = self.get_node_by_name(node_name)
             if not hydra_node:
@@ -684,7 +686,10 @@ class IntegratedOutputWriter():
             else:
                 result_attr = self.hydra.get_attribute_by_name_and_dimension("simulated_Curtailment", result_dim["id"])
                 data_type = "DATAFRAME"
-                data.index = data.index.to_timestamp()
+                try:
+                    data.index = data.index.to_timestamp()
+                except AttributeError:
+                    pass
                 data.index = data.index.map(str)
                 value = data.to_json()
 
@@ -692,6 +697,11 @@ class IntegratedOutputWriter():
 
             result_unit_id = result_unit["id"] if result_unit is not None else "-"
             sf_res_attr = self.hydra.add_resource_attribute("NODE", hydra_node["id"], result_attr["id"], is_var='Y', error_on_duplicate=False)
+
+            if sf_res_attr["id"] in seen_raids:
+                continue
+
+            seen_raids.add(sf_res_attr["id"])
 
             dataset = { "name":  result_attr["name"],
                         "type":  data_type,
