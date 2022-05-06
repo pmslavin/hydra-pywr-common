@@ -13,6 +13,6 @@ class PywrUnknownParameter(PywrParameter, ArbitraryDirectAttrs):
     @property
     def value(self):
         ret = self.get_attr_values()
-        ret.update( {"type": self.key} )
+        #ret.update( {"type": self.key} )
         return ret
 

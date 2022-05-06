@@ -224,7 +224,9 @@ class PywrDataReference(PywrEntity, ABC):
     @staticmethod
     def ReferenceFactory(name, data):
         if isinstance(data, dict):
-            if data.get("type"):
+            if t := data.get("type"):
+                if t.lower().endswith("recorder"):
+                    return PywrRecorder.RecorderFactory((name, data))
                 """ It looks like a Parameter, try to construct it as one... """
                 try:
                     return PywrParameter.ParameterFactory((name, data)) # NB tuple
