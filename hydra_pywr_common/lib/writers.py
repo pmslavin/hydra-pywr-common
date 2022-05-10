@@ -1512,6 +1512,236 @@ class HydraToPywrNetwork():
         #self.parameters.update(node.parameters)
         #self.recorders.update(node.recorders)
 
+
+"""
+    Multi model metrics.h5 => Updated Hydra network
+"""
+
+class MultiOutputWriter():
+
+    def __init__(self, scenario_id, template_id, engine_name, metric_file, domain, hydra=None, hostname=None, session_id=None, user_id=None):
+        import tables
+        self.scenario_id = scenario_id
+        self.template_id = template_id
+        self.metrics = pd.HDFStore(metric_file)
+        self.domain = domain
+
+        self.hydra = hydra
+        self.hostname = hostname
+        self.session_id = session_id
+        self.user_id = user_id
+
+        self.initialise_hydra_connection()
+
+    def initialise_hydra_connection(self):
+        if not self.hydra:
+            from hydra_client.connection import JSONConnection
+            self.hydra = JSONConnection(self.hostname, session_id=self.session_id, user_id=self.user_id)
+
+        self.scenario = self.hydra.get_scenario(self.scenario_id, include_data=True, include_results=False, include_metadata=False, include_attr=False)
+        self.network_id = self.scenario.network_id
+        #self.network = self.hydra.get_network(self.network_id, include_data=False, include_results=False, template_id=self.template_id)
+        self.network = self.hydra.get_network(self.network_id, include_data=False, include_results=False)
+        self.network_ras = self.hydra.get_resource_attributes("network", self.network_id)
+
+    def _copy_scenario(self):
+        json_scenario = self.scenario.as_json()
+        scenario = json.loads(json_scenario)
+        scenario["resourcescenarios"] = []
+        return scenario
+
+    def get_node_by_name(self, name):
+        for node in self.network["nodes"]:
+            if node["name"] == name:
+                return node
+
+    def build_hydra_output(self):
+        output_scenario = self._copy_scenario()
+        """
+        output_attr = "flow"
+        self.times = build_times(self.data)
+        node_datasets = self.process_node_results(output_attr)
+        parameter_datasets = self.process_parameter_results()
+        node_metrics = self.process_metrics()
+
+        node_metric_scenarios = self.add_node_metrics(node_metrics)
+        """
+        node_data_map = self.build_node_datasets()
+        node_scenarios = self.build_node_scenarios(node_data_map)
+
+        output_scenario["resourcescenarios"] = node_scenarios
+
+        breakpoint()
+        self.hydra.update_scenario(output_scenario)
+
+
+    def build_node_datasets(self):
+        """
+            m = pd.HDFStore("Water_model_Metrics.h5")
+            groups = [g for g in m]
+            >>> m[groups[0]].columns.names[0]
+            'weather'
+            >>> m[groups[0]]
+            weather                  0
+            1971-12-27/1972-01-02  0.0
+            1972-01-03/1972-01-09  0.0
+            1972-01-10/1972-01-16  0.0
+            1972-01-17/1972-01-23  0.0
+            1972-01-24/1972-01-30  0.0
+            ...                    ...
+
+        """
+        node_data_map = {}
+        for group_name in self.metrics:
+            group_df = self.metrics[group_name]
+            index = group_df.index.map(str)
+
+            try:
+                values = unwrap_list(group_df.values)
+            except:
+                values = group_df.values
+            base_name = group_name.strip('/')
+            if base_name.endswith("_values"):
+                attr_name = base_name.replace("_values", "")
+            else:
+                attr_name = base_name
+            rec_ds = self.get_network_dataset_by_name(attr_name)
+            if not rec_ds:
+                log.info(f"No dataset for {attr_name=}")
+                attr_name = attr_name + " pyene_recorder"
+                rec_ds = self.get_network_dataset_by_name(attr_name)
+                if not rec_ds:
+                    log.info(f"Also no dataset for {attr_name=}")
+                    continue
+            rec_data = json.loads(rec_ds["value"])
+            node_name = rec_data.get("node")
+            if not node_name:
+                log.info(f"No node in {group_name} dataset: {rec_ds['value']}")
+                continue
+            log.info(f"Adding data for {node_name=} from recorder {attr_name}")
+            #node_data_map[(node_name, attr_name)] = dict(zip(index, values))
+            node_data_map[(node_name, base_name)] = group_df
+
+        return node_data_map
+
+
+    def build_node_scenarios(self, node_data_map):
+        resource_scenarios = []
+
+        volume_dim = "Volume"
+        volumetric_flow_rate_dim = "Volumetric flow rate"
+        power_dim = "Power"
+        storage_types = ("reservoir", "storage", "river", "catchment", "output")
+        energy_types = ("generator", "bus", "line", "load", "battery")
+
+        seen_raid = set()
+
+        for (node_name, attr), data in node_data_map.items():
+            print(f"{self.domain} => {node_name}")
+            hydra_node = self.get_node_by_name(node_name)
+            if not hydra_node:
+                print(f"Skipping attr {attr} on {node_name}")
+                continue
+
+            hydra_node_type = hydra_node["types"][0]["name"]
+            #result_dim = self.hydra.get_dimension_by_name(volumetric_flow_rate_dim)
+
+            if attr.lower().endswith("_values"):
+                #result_attr = self.hydra.get_attribute_by_name_and_dimension("Curtailment_value", result_dim["id"])
+                data_type = "SCALAR"
+                value = json.dumps(data[0])
+            else:
+                #result_attr = self.hydra.get_attribute_by_name_and_dimension("simulated_Curtailment", result_dim["id"])
+                data_type = "DATAFRAME"
+                data.index = data.index.to_timestamp()
+                data.index = data.index.map(str)
+                value = data.to_json()
+
+            if hydra_node_type.lower() in storage_types:
+                if attr.lower().endswith("_values"):
+                    result_dim = self.hydra.get_dimension_by_name(volumetric_flow_rate_dim)
+                    result_attr = self.hydra.get_attribute_by_name_and_dimension("Curtailment_value", result_dim["id"])
+                    result_unit = self.hydra.get_unit_by_abbreviation("Mm³/day")
+                else:
+                    result_dim = self.hydra.get_dimension_by_name(volume_dim)
+                    result_attr = self.hydra.get_attribute_by_name_and_dimension("simulated_volume", result_dim["id"])
+                    result_unit = self.hydra.get_unit_by_abbreviation("Mm³")
+            elif hydra_node_type.lower() in energy_types:
+                if attr.lower().endswith("_values"):
+                    result_dim = self.hydra.get_dimension_by_name(power_dim)
+                    result_attr = self.hydra.get_attribute_by_name_and_dimension("energy_value", result_dim["id"])
+                    result_unit = self.hydra.get_unit_by_abbreviation("MW")
+                else:
+                    result_dim = self.hydra.get_dimension_by_name(power_dim)
+                    result_attr = self.hydra.get_attribute_by_name_and_dimension("flow", result_dim["id"])
+                    result_unit = self.hydra.get_unit_by_abbreviation("MW")
+            else:
+                result_dim = self.hydra.get_dimension_by_name(volumetric_flow_rate_dim)
+                result_attr = self.hydra.get_attribute_by_name_and_dimension("simulated_flow", result_dim["id"])
+                result_unit = self.hydra.get_unit_by_abbreviation("Mm³/day")
+
+            #result_unit = self.hydra.get_unit_by_abbreviation("Mm³/day")
+            result_unit_id = result_unit["id"] if result_unit is not None else "-"
+
+            sf_res_attr = self.hydra.add_resource_attribute("NODE", hydra_node["id"], result_attr["id"], is_var='Y', error_on_duplicate=False)
+
+            dataset = { "name":  result_attr["name"],
+                        "type":  data_type,
+                        "value": value,
+                        "metadata": "{}",
+                        "unit_id": result_unit_id,
+                        "hidden": 'N'
+                      }
+
+            resource_scenario = { "resource_attr_id": sf_res_attr["id"],
+                                  "dataset": dataset
+                                }
+
+            if sf_res_attr["id"] in seen_raid:
+                """ This situation will cause duplicate res_attr keys and fail on db addition. """
+                breakpoint()
+            else:
+                seen_raid.add(sf_res_attr["id"])
+                resource_scenarios.append(resource_scenario)
+
+        return resource_scenarios
+
+
+    def get_network_dataset_by_name(self, attr_name):
+        """
+        network_id = 39010
+        scenario = 78658
+        attr_name = "Assalaya_irrigation_water_supply"
+
+        client = JSONConnection(app_name='Pywr Hydra App', user_id=12)
+
+        attr = client.get_attribute_by_name_and_dimension(attr_name, None)
+        net_ra = client.get_resource_attributes("network", network_id)
+        ra = [a for a in net_ra if a["attr_id"] == attr["id"]][0]
+        data = client.get_resource_scenario(ra["id"], scenario, get_parent_data=False)
+        print(data)
+        print(data["dataset"]["value"])
+        """
+        attr = self.hydra.get_attribute_by_name_and_dimension(attr_name, None)
+        if not attr:
+            log.info(f"No attr found with name {attr_name}")
+            return
+        #scenario.resourcescenarios[0].resource_attr_id
+        for rs in self.scenario.resourcescenarios:
+            #if rs.resource_attr_id == attr["id"]:
+            if rs.dataset.name == attr["name"]:
+                return rs.dataset
+
+        """
+        try:
+            ra = [a for a in self.network_ras if a["attr_id"] == attr["id"]][0]
+        except IndexError:
+            raise
+        """
+
+
+
+
 """
     Integrated model output.h5 => Updated Hydra network
 """
