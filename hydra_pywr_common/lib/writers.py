@@ -1571,7 +1571,6 @@ class MultiOutputWriter():
 
         output_scenario["resourcescenarios"] = node_scenarios
 
-        breakpoint()
         self.hydra.update_scenario(output_scenario)
 
 
@@ -1637,7 +1636,6 @@ class MultiOutputWriter():
         seen_raid = set()
 
         for (node_name, attr), data in node_data_map.items():
-            print(f"{self.domain} => {node_name}")
             hydra_node = self.get_node_by_name(node_name)
             if not hydra_node:
                 print(f"Skipping attr {attr} on {node_name}")
@@ -1667,14 +1665,20 @@ class MultiOutputWriter():
                     result_attr = self.hydra.get_attribute_by_name_and_dimension("simulated_volume", result_dim["id"])
                     result_unit = self.hydra.get_unit_by_abbreviation("Mm³")
             elif hydra_node_type.lower() in energy_types:
-                if attr.lower().endswith("_values"):
-                    result_dim = self.hydra.get_dimension_by_name(power_dim)
+                result_dim = self.hydra.get_dimension_by_name(power_dim)
+                result_unit = self.hydra.get_unit_by_abbreviation("MW")
+                if attr.lower().endswith("total energy spilled_values"):
+                    result_attr = self.hydra.get_attribute_by_name_and_dimension("total_energy_spill_value", result_dim["id"])
+                elif attr.lower().endswith("total energy spilled"):
+                    result_attr = self.hydra.get_attribute_by_name_and_dimension("total_energy_spill", result_dim["id"])
+                elif attr.lower().endswith("curtailment_values"):
+                    result_attr = self.hydra.get_attribute_by_name_and_dimension("load_curtailment_value", result_dim["id"])
+                elif attr.lower().endswith("_values"):
                     result_attr = self.hydra.get_attribute_by_name_and_dimension("energy_value", result_dim["id"])
-                    result_unit = self.hydra.get_unit_by_abbreviation("MW")
+                elif attr.lower().endswith("curtailment"):
+                    result_attr = self.hydra.get_attribute_by_name_and_dimension("load_curtailment", result_dim["id"])
                 else:
-                    result_dim = self.hydra.get_dimension_by_name(power_dim)
                     result_attr = self.hydra.get_attribute_by_name_and_dimension("flow", result_dim["id"])
-                    result_unit = self.hydra.get_unit_by_abbreviation("MW")
             else:
                 result_dim = self.hydra.get_dimension_by_name(volumetric_flow_rate_dim)
                 result_attr = self.hydra.get_attribute_by_name_and_dimension("simulated_flow", result_dim["id"])
@@ -1701,10 +1705,15 @@ class MultiOutputWriter():
                 """ This situation will cause duplicate res_attr keys and fail on db addition. """
                 breakpoint()
             else:
+                print(f"{self.domain} => {node_name=}  {attr=}")
                 seen_raid.add(sf_res_attr["id"])
                 resource_scenarios.append(resource_scenario)
 
         return resource_scenarios
+
+    def resample_energy_metrics(self, metric_file):
+        metrics = pd.HDFStore(metric_file)
+
 
 
     def get_network_dataset_by_name(self, attr_name):
