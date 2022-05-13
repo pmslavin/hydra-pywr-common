@@ -1555,21 +1555,16 @@ class MultiOutputWriter():
             if node["name"] == name:
                 return node
 
-    def build_hydra_output(self):
+    def build_hydra_output(self, resample_metric_file="Eth_energy_Metrics.h5"):
         output_scenario = self._copy_scenario()
-        """
-        output_attr = "flow"
-        self.times = build_times(self.data)
-        node_datasets = self.process_node_results(output_attr)
-        parameter_datasets = self.process_parameter_results()
-        node_metrics = self.process_metrics()
 
-        node_metric_scenarios = self.add_node_metrics(node_metrics)
-        """
         node_data_map = self.build_node_datasets()
         node_scenarios = self.build_node_scenarios(node_data_map)
 
-        output_scenario["resourcescenarios"] = node_scenarios
+        curt_res_metrics, gen_res_metrics = self.resample_energy_metrics(resample_metric_file)
+        aggregated_scenarios = self.make_resampled_scenarios(curt_res_metrics, gen_res_metrics)
+
+        output_scenario["resourcescenarios"] = node_scenarios + aggregated_scenarios
 
         self.hydra.update_scenario(output_scenario)
 
@@ -1711,9 +1706,129 @@ class MultiOutputWriter():
 
         return resource_scenarios
 
-    def resample_energy_metrics(self, metric_file):
-        metrics = pd.HDFStore(metric_file)
 
+    def make_resampled_scenarios(self, curt_res_metrics, gen_res_metrics):
+        resource_scenarios = []
+
+        agg_node_name = "ET_Gilgel Gibe_II power pyene"
+
+        curt_attr_name = "aggregated_energy_curtailment"
+        gen_attr_name = "aggregated_generation"
+
+        result_dim = self.hydra.get_dimension_by_name("Power")
+        result_unit = self.hydra.get_unit_by_abbreviation("MW")
+
+        curt_result_attr = self.hydra.get_attribute_by_name_and_dimension(curt_attr_name, result_dim["id"])
+        gen_result_attr = self.hydra.get_attribute_by_name_and_dimension(gen_attr_name, result_dim["id"])
+
+        curt_res_metrics.index = curt_res_metrics.index.to_timestamp().map(str)
+        curt_value = curt_res_metrics.to_json()
+
+        gen_res_metrics.index = gen_res_metrics.index.to_timestamp().map(str)
+        gen_value = gen_res_metrics.to_json()
+
+        hydra_node = self.get_node_by_name(agg_node_name)
+        if not hydra_node:
+            #  Return empty rs
+            return resource_scenarios
+
+        curt_res_attr = self.hydra.add_resource_attribute("NODE", hydra_node["id"], curt_result_attr["id"], is_var='Y', error_on_duplicate=False)
+        gen_res_attr = self.hydra.add_resource_attribute("NODE", hydra_node["id"], gen_result_attr["id"], is_var='Y', error_on_duplicate=False)
+
+        curt_dataset = {
+                "name":  curt_result_attr["name"],
+                "type":  "DATAFRAME",
+                "value": curt_value,
+                "metadata": "{}",
+                "unit_id": result_unit["id"],
+                "hidden": 'N'
+        }
+
+        curt_resource_scenario = {
+            "resource_attr_id": curt_res_attr["id"],
+            "dataset": curt_dataset
+        }
+
+        gen_dataset = {
+                "name":  gen_result_attr["name"],
+                "type":  "DATAFRAME",
+                "value": gen_value,
+                "metadata": "{}",
+                "unit_id": result_unit["id"],
+                "hidden": 'N'
+        }
+
+        gen_resource_scenario = {
+            "resource_attr_id": gen_res_attr["id"],
+            "dataset": gen_dataset
+        }
+
+        resource_scenarios.append(curt_resource_scenario)
+        resource_scenarios.append(gen_resource_scenario)
+
+        return resource_scenarios
+
+
+    def resample_energy_metrics(self, metric_file):
+        try:
+            metrics = pd.HDFStore(metric_file)
+        except OSError:
+            return None, None
+
+        scenario_recorder = "/ET_Gilgel Gibe_II power pyene:MWh"
+
+        try:
+            scenarios = metrics[scenario_recorder].columns
+        except KeyError:
+            return None, None
+
+        # Energy demand curtailment
+        Eth_load_curtailment = [
+            "load_40000004:curtailment",
+            "load_40000003:curtailment",
+            "load_40000002:curtailment",
+            "load_40000001:curtailment",
+            "load_40000000:curtailment",
+            "load_250684:curtailment",
+            "load_250630:curtailment",
+            "load_250442:curtailment"
+        ]
+
+        curtailment_factor = 7/1000000
+        Eth_edc_400_100 = pd.DataFrame()
+
+        for scenario in scenarios:
+            Eth_edc_400_100_sce = pd.DataFrame()
+            for load in Eth_load_curtailment:
+                load_rec = '/' + load
+                load_curt = metrics[load_rec]
+                Eth_edc_400_100_sce[load] = load_curt[scenario]
+
+            Eth_edc_400_100_sce = Eth_edc_400_100_sce.sum(axis=1) * curtailment_factor
+            Eth_edc_400_100[scenario] = Eth_edc_400_100_sce.resample('Y').sum()
+
+        # Thermal generation
+        Eth_gen = [
+            "ETH_Conv_recorder",
+            "ETH_future_Conv_recorder",
+            "Generic Gas_recorder"
+        ]
+
+        generation_factor = 7/1000000
+        Eth_gen_400_100 = pd.DataFrame()
+
+        for scenario in scenarios:
+            Eth_gen_400_100_sce = pd.DataFrame()
+            for gen in Eth_gen:
+                gen_rec = '/' + gen
+                gen_df = metrics[gen_rec]
+                Eth_gen_400_100_sce[gen] = gen_df[scenario]
+
+            Eth_gen_400_100_sce = Eth_gen_400_100_sce.sum(axis=1) * generation_factor
+            Eth_gen_400_100[scenario] = Eth_gen_400_100_sce.resample('Y').sum()
+
+
+        return Eth_edc_400_100, Eth_gen_400_100
 
 
     def get_network_dataset_by_name(self, attr_name):
