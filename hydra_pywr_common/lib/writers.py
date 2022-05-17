@@ -1622,13 +1622,32 @@ class MultiOutputWriter():
     def build_node_scenarios(self, node_data_map):
         resource_scenarios = []
 
-        volume_dim = "Volume"
-        volumetric_flow_rate_dim = "Volumetric flow rate"
-        power_dim = "Power"
+        volume_dim_name = "Volume"
+        volumetric_flow_rate_dim_name = "Volumetric flow rate"
+        power_dim_name = "Power"
         storage_types = ("reservoir", "storage", "river", "catchment", "output")
         energy_types = ("generator", "bus", "line", "load", "battery")
 
         seen_raid = set()
+
+        # Prefetch dimensions, units, and attrs
+        vol_dim = self.hydra.get_dimension_by_name(volume_dim_name)
+        vol_result_unit = self.hydra.get_unit_by_abbreviation("Mm³")
+        simvol_result_attr = self.hydra.get_attribute_by_name_and_dimension("simulated_volume", vol_dim["id"])
+
+        vfr_dim = self.hydra.get_dimension_by_name(volumetric_flow_rate_dim_name)
+        vfr_result_unit = self.hydra.get_unit_by_abbreviation("Mm³/day")
+        water_curtval_result_attr = self.hydra.get_attribute_by_name_and_dimension("Curtailment_value", vfr_dim["id"])
+        simflow_result_attr = self.hydra.get_attribute_by_name_and_dimension("simulated_flow", vfr_dim["id"])
+
+        power_dim = self.hydra.get_dimension_by_name(power_dim_name)
+        power_result_unit = self.hydra.get_unit_by_abbreviation("MW")
+        tesv_result_attr = self.hydra.get_attribute_by_name_and_dimension("total_energy_spill_value", power_dim["id"])
+        tes_result_attr = self.hydra.get_attribute_by_name_and_dimension("total_energy_spill", power_dim["id"])
+        load_curtval_result_attr = self.hydra.get_attribute_by_name_and_dimension("load_curtailment_value", power_dim["id"])
+        enval_result_attr = self.hydra.get_attribute_by_name_and_dimension("energy_value", power_dim["id"])
+        load_curt_result_attr = self.hydra.get_attribute_by_name_and_dimension("load_curtailment", power_dim["id"])
+        enflow_result_attr = self.hydra.get_attribute_by_name_and_dimension("flow", power_dim["id"])
 
         for (node_name, attr), data in node_data_map.items():
             hydra_node = self.get_node_by_name(node_name)
@@ -1652,32 +1671,45 @@ class MultiOutputWriter():
 
             if hydra_node_type.lower() in storage_types:
                 if attr.lower().endswith("_values"):
-                    result_dim = self.hydra.get_dimension_by_name(volumetric_flow_rate_dim)
-                    result_attr = self.hydra.get_attribute_by_name_and_dimension("Curtailment_value", result_dim["id"])
-                    result_unit = self.hydra.get_unit_by_abbreviation("Mm³/day")
+                    result_attr = water_curtval_result_attr
+                    result_unit = vfr_result_unit
+                    #result_dim = self.hydra.get_dimension_by_name(volumetric_flow_rate_dim)
+                    #result_attr = self.hydra.get_attribute_by_name_and_dimension("Curtailment_value", result_dim["id"])
+                    #result_unit = self.hydra.get_unit_by_abbreviation("Mm³/day")
                 else:
-                    result_dim = self.hydra.get_dimension_by_name(volume_dim)
-                    result_attr = self.hydra.get_attribute_by_name_and_dimension("simulated_volume", result_dim["id"])
-                    result_unit = self.hydra.get_unit_by_abbreviation("Mm³")
+                    result_attr = simvol_result_attr
+                    result_unit = vol_result_unit
+                    #result_dim = self.hydra.get_dimension_by_name(volume_dim)
+                    #result_attr = self.hydra.get_attribute_by_name_and_dimension("simulated_volume", result_dim["id"])
+                    #result_unit = self.hydra.get_unit_by_abbreviation("Mm³")
             elif hydra_node_type.lower() in energy_types:
-                result_dim = self.hydra.get_dimension_by_name(power_dim)
-                result_unit = self.hydra.get_unit_by_abbreviation("MW")
+                #result_dim = self.hydra.get_dimension_by_name(power_dim)
+                #result_unit = self.hydra.get_unit_by_abbreviation("MW")
+                result_unit = power_result_unit
                 if attr.lower().endswith("total energy spilled_values"):
-                    result_attr = self.hydra.get_attribute_by_name_and_dimension("total_energy_spill_value", result_dim["id"])
+                    result_attr = tesv_result_attr
+                    #result_attr = self.hydra.get_attribute_by_name_and_dimension("total_energy_spill_value", result_dim["id"])
                 elif attr.lower().endswith("total energy spilled"):
-                    result_attr = self.hydra.get_attribute_by_name_and_dimension("total_energy_spill", result_dim["id"])
+                    result_attr = tes_result_attr
+                    #result_attr = self.hydra.get_attribute_by_name_and_dimension("total_energy_spill", result_dim["id"])
                 elif attr.lower().endswith("curtailment_values"):
-                    result_attr = self.hydra.get_attribute_by_name_and_dimension("load_curtailment_value", result_dim["id"])
+                    result_attr = load_curtval_result_attr
+                    #result_attr = self.hydra.get_attribute_by_name_and_dimension("load_curtailment_value", result_dim["id"])
                 elif attr.lower().endswith("_values"):
-                    result_attr = self.hydra.get_attribute_by_name_and_dimension("energy_value", result_dim["id"])
+                    result_attr = enval_result_attr
+                    #result_attr = self.hydra.get_attribute_by_name_and_dimension("energy_value", result_dim["id"])
                 elif attr.lower().endswith("curtailment"):
-                    result_attr = self.hydra.get_attribute_by_name_and_dimension("load_curtailment", result_dim["id"])
+                    result_attr = load_curt_result_attr
+                    #result_attr = self.hydra.get_attribute_by_name_and_dimension("load_curtailment", result_dim["id"])
                 else:
-                    result_attr = self.hydra.get_attribute_by_name_and_dimension("flow", result_dim["id"])
+                    #result_attr = self.hydra.get_attribute_by_name_and_dimension("flow", result_dim["id"])
+                    result_attr = enflow_result_attr
             else:
-                result_dim = self.hydra.get_dimension_by_name(volumetric_flow_rate_dim)
-                result_attr = self.hydra.get_attribute_by_name_and_dimension("simulated_flow", result_dim["id"])
-                result_unit = self.hydra.get_unit_by_abbreviation("Mm³/day")
+                #result_dim = self.hydra.get_dimension_by_name(volumetric_flow_rate_dim)
+                #result_attr = self.hydra.get_attribute_by_name_and_dimension("simulated_flow", result_dim["id"])
+                #result_unit = self.hydra.get_unit_by_abbreviation("Mm³/day")
+                result_attr = simflow_result_attr
+                result_unit = vfr_result_unit
 
             #result_unit = self.hydra.get_unit_by_abbreviation("Mm³/day")
             result_unit_id = result_unit["id"] if result_unit is not None else "-"
@@ -1698,7 +1730,7 @@ class MultiOutputWriter():
 
             if sf_res_attr["id"] in seen_raid:
                 """ This situation will cause duplicate res_attr keys and fail on db addition. """
-                breakpoint()
+                print(f"Duplicate raid for {node_name=} with {attr=}")
             else:
                 print(f"{self.domain} => {node_name=}  {attr=}")
                 seen_raid.add(sf_res_attr["id"])
@@ -1736,12 +1768,12 @@ class MultiOutputWriter():
         gen_res_attr = self.hydra.add_resource_attribute("NODE", hydra_node["id"], gen_result_attr["id"], is_var='Y', error_on_duplicate=False)
 
         curt_dataset = {
-                "name":  curt_result_attr["name"],
-                "type":  "DATAFRAME",
-                "value": curt_value,
-                "metadata": "{}",
-                "unit_id": result_unit["id"],
-                "hidden": 'N'
+            "name":  curt_result_attr["name"],
+            "type":  "DATAFRAME",
+            "value": curt_value,
+            "metadata": "{}",
+            "unit_id": result_unit["id"],
+            "hidden": 'N'
         }
 
         curt_resource_scenario = {
@@ -1750,12 +1782,12 @@ class MultiOutputWriter():
         }
 
         gen_dataset = {
-                "name":  gen_result_attr["name"],
-                "type":  "DATAFRAME",
-                "value": gen_value,
-                "metadata": "{}",
-                "unit_id": result_unit["id"],
-                "hidden": 'N'
+            "name":  gen_result_attr["name"],
+            "type":  "DATAFRAME",
+            "value": gen_value,
+            "metadata": "{}",
+            "unit_id": result_unit["id"],
+            "hidden": 'N'
         }
 
         gen_resource_scenario = {
